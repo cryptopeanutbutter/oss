@@ -1,0 +1,15 @@
+# AppArmor profile for Discord Flatpak launcher
+#include <tunables/global>
+
+profile discord /usr/local/bin/discord-firejail {
+  include <abstractions/base>
+  include <abstractions/dbus-session>
+  include <abstractions/nameservice>
+  include <abstractions/user-tmp>
+
+  network,
+
+  /usr/bin/firejail ixr,
+  /usr/local/bin/discord-firejail r,
+  owner @{HOME}/.var/app/com.discordapp.Discord/** rwk,
+}

@@ -1,0 +1,22 @@
+include /etc/sway/config.d/*
+
+set $mod Mod4
+
+output * bg #0b0b0f solid_color
+
+gaps inner 8
+smart_gaps on
+
+exec_always --no-startup-id dbus-update-activation-environment --systemd WAYLAND_DISPLAY XDG_CURRENT_DESKTOP
+exec_always --no-startup-id /usr/lib/polkit-gnome/polkit-gnome-authentication-agent-1
+
+bindsym $mod+Return exec gnome-terminal
+bindsym $mod+Shift+q kill
+bindsym $mod+d exec /usr/local/pharaoh/pharaoh-shell/pharaoh-shell --show-launcher
+
+bar {
+  mode dock
+  hidden_state hide
+  position bottom
+  status_command exec /usr/local/pharaoh/pharaoh-shell/pharaoh-shell --status-bar
+}

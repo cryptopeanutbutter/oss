@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+exec firejail --profile=/etc/firejail/discord.profile flatpak run com.discordapp.Discord "$@"

@@ -1,0 +1,1 @@
+set(FLUTTER_PLUGIN_LIST)

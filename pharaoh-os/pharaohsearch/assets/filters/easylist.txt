@@ -1,0 +1,6 @@
+# Minimal embedded tracking filter list
+||doubleclick.net^
+||google-analytics.com^
+||facebook.net^
+||adservice.google.com^
+||tracking.pharaoh-os.example^

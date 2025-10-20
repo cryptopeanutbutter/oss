@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+exec firejail --profile=/etc/firejail/pharaohsearch.profile /usr/local/pharaoh/pharaohsearch/pharaohsearch "$@"

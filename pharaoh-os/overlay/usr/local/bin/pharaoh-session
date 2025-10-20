@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+export XDG_CURRENT_DESKTOP=Pharaoh
+export XDG_SESSION_TYPE=wayland
+export GTK_THEME=PharaohDark
+export QT_QPA_PLATFORM=wayland
+export QT_WAYLAND_DISABLE_WINDOWDECORATION=1
+export MOZ_ENABLE_WAYLAND=1
+
+mkdir -p "$HOME/.config/pharaoh"
+
+if [[ ! -f "$HOME/.config/pharaoh/first-run" ]]; then
+  echo "[pharaoh-session] Running first boot tasks"
+  systemctl --user daemon-reload 2>/dev/null || true
+  systemctl --user enable pharaoh-flatpak-setup.service 2>/dev/null || true
+  systemctl --user start pharaoh-flatpak-setup.service 2>/dev/null || true
+  touch "$HOME/.config/pharaoh/first-run"
+fi
+
+if ! pgrep -x nm-applet >/dev/null; then
+  nm-applet --indicator &
+fi
+if ! pgrep -x wireplumber >/dev/null; then
+  wireplumber &
+fi
+
+if command -v sway >/dev/null; then
+  sway --config /usr/share/pharaoh/sway-config &
+  SWAY_PID=$!
+  sleep 2
+else
+  echo "sway not found" >&2
+fi
+
+/usr/local/pharaoh/pharaoh-shell/pharaoh-shell --settings /usr/share/pharaoh/themes/dark.json &
+SHELL_PID=$!
+
+wait ${SHELL_PID}
+if [[ -n "${SWAY_PID:-}" ]]; then
+  kill ${SWAY_PID} 2>/dev/null || true
+fi
