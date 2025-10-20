@@ -1,5 +1,4 @@
 name: Build Pharaoh OS ISO
-
 on:
   push:
   workflow_dispatch:
@@ -32,37 +31,100 @@ jobs:
           flutter config --enable-linux-desktop
           flutter --version
 
-      # --- Detect where the Makefile / scripts live (root or subfolder) ---
-      - name: Detect build directory
-        id: detect
+      # --- Write a robust build script to avoid YAML/EOF issues ---
+      - name: Create CI build script
         shell: bash
         run: |
           set -euo pipefail
+          cat > ci_build.sh <<'BASH'
+          #!/usr/bin/env bash
+          set -xeuo pipefail
+
+          # Detect build dir
           BUILD_DIR="."
-          if [ -f Makefile ]; then
+          if [[ -f Makefile ]]; then
             BUILD_DIR="."
           else
             MF="$(git ls-files | grep -E '(^|/)Makefile$' | head -n1 || true)"
-            if [ -n "$MF" ]; then
+            if [[ -n "${MF:-}" ]]; then
               BUILD_DIR="$(dirname "$MF")"
             else
               SB="$(git ls-files | grep -E '(^|/)scripts/build-rootfs\.sh$' | head -n1 || true)"
-              if [ -n "$SB" ]; then
+              if [[ -n "${SB:-}" ]]; then
                 BUILD_DIR="$(dirname "$(dirname "$SB")")"
               fi
             fi
           fi
-          echo "BUILD_DIR=$BUILD_DIR" | tee -a "$GITHUB_ENV"
           echo "Using BUILD_DIR=$BUILD_DIR"
 
-      # --- Build using Makefile when present; otherwise fall back to scripts ---
+          cd "$BUILD_DIR"
+
+          # Make scripts executable if present
+          [[ -d scripts ]] && chmod +x scripts/*.sh || true
+
+          # Prefer Makefile targets; else use scripts; also try to build Flutter apps
+          if [[ -f Makefile ]]; then
+            make -n deps     >/dev/null 2>&1 && make deps     || echo "no deps target"
+            make -n rootfs   >/dev/null 2>&1 && make rootfs   || { [[ -f scripts/build-rootfs.sh ]] && bash scripts/build-rootfs.sh; }
+            make -n overlay  >/dev/null 2>&1 && make overlay  || { [[ -f scripts/chroot-setup.sh ]] && bash scripts/chroot-setup.sh || true; }
+            make -n shell    >/dev/null 2>&1 && make shell    || {
+              [[ -d pharaoh-shell      ]] && (cd pharaoh-shell      && flutter build linux) || true
+              [[ -d pharaohsearch      ]] && (cd pharaohsearch      && flutter build linux) || true
+              [[ -d pharaoh-firewall   ]] && (cd pharaoh-firewall   && flutter build linux) || true
+              [[ -d pharaoh-store      ]] && (cd pharaoh-store      && flutter build linux) || true
+            }
+            make -n iso-bios >/dev/null 2>&1 && make iso-bios || { [[ -f scripts/package-iso-bios.sh ]] && bash scripts/package-iso-bios.sh || true; }
+            make -n iso-uefi >/dev/null 2>&1 && make iso-uefi || { [[ -f scripts/package-iso-uefi.sh ]] && bash scripts/package-iso-uefi.sh || true; }
+          else
+            [[ -f scripts/build-rootfs.sh     ]] && bash scripts/build-rootfs.sh
+            [[ -f scripts/chroot-setup.sh     ]] && bash scripts/chroot-setup.sh || true
+            [[ -f scripts/package-iso-bios.sh ]] && bash scripts/package-iso-bios.sh || true
+            [[ -f scripts/package-iso-uefi.sh ]] && bash scripts/package-iso-uefi.sh || true
+            [[ -d pharaoh-shell      ]] && (cd pharaoh-shell      && flutter build linux) || true
+            [[ -d pharaohsearch      ]] && (cd pharaohsearch      && flutter build linux) || true
+            [[ -d pharaoh-firewall   ]] && (cd pharaoh-firewall   && flutter build linux) || true
+            [[ -d pharaoh-store      ]] && (cd pharaoh-store      && flutter build linux) || true
+          fi
+
+          # Normalize ISO names into ./out/
+          mkdir -p out
+          mapfile -t ISO_LIST < <(find . -maxdepth 6 -type f -name '*.iso' | sort || true)
+          for f in "${ISO_LIST[@]}"; do echo "Found ISO: $f"; done
+          BIOS_DONE=0; UEFI_DONE=0
+          for f in "${ISO_LIST[@]}"; do
+            low="$(basename "$f" | tr '[:upper:]' '[:lower:]')"
+            if [[ $low == *uefi*.iso && $UEFI_DONE -eq 0 ]]; then cp -f "$f" out/PharaohOS-uefi.iso; UEFI_DONE=1; fi
+            if [[ $low == *bios*.iso && $BIOS_DONE -eq 0 ]]; then cp -f "$f" out/PharaohOS-bios.iso; BIOS_DONE=1; fi
+          done
+          [[ $BIOS_DONE -eq 0 && ${#ISO_LIST[@]} -ge 1 ]] && cp -f "${ISO_LIST[0]}" out/PharaohOS-bios.iso || true
+          [[ $UEFI_DONE -eq 0 && ${#ISO_LIST[@]} -ge 2 ]] && cp -f "${ISO_LIST[1]}" out/PharaohOS-uefi.iso || true
+
+          ls -lh out || true
+          BASH
+          chmod +x ci_build.sh
+
       - name: Build rootfs & shell
         shell: bash
-        working-directory: ${{ env.BUILD_DIR }}
-        run: |
-          set -xeuo pipefail
-          if [ -d scripts ]; then chmod +x scripts/*.sh || true; fi
+        run: ./ci_build.sh
 
-          if [ -f Makefile ]; then
-            make -n deps     >/dev/null 2>&1 && make deps     || echo "no deps target"
-            make -n rootfs   >/dev/null 2>&1 && make rootfs   || { [ -f scripts/build-rootfs.sh ] && bash scripts/build-rootfs.sh; }
+      - name: Upload BIOS ISO (if present)
+        uses: actions/upload-artifact@v4
+        with:
+          name: PharaohOS-bios.iso
+          path: out/PharaohOS-bios.iso
+          if-no-files-found: warn
+
+      - name: Upload UEFI ISO (if present)
+        uses: actions/upload-artifact@v4
+        with:
+          name: PharaohOS-uefi.iso
+          path: out/PharaohOS-uefi.iso
+          if-no-files-found: warn
+
+      - name: Upload any ISOs (fallback)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pharaoh-os-isos
+          path: ${{ github.workspace }}/**/*.iso
+          if-no-files-found: warn
