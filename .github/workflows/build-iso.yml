@@ -11,95 +11,82 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Show repo layout
-        shell: bash
-        run: |
-          echo "Workspace: $GITHUB_WORKSPACE"
-          ls -la
-          echo
-          echo "Top-level files:"
-          find . -maxdepth 1 -type f -printf '%f\n' | sort
-          echo
-          echo "Makefiles anywhere:"
-          git ls-files | grep -Ei '(^|/)(GNUmakefile|Makefile|makefile)$' || true
-          echo
-          echo "Top-level dirs:"
-          find . -maxdepth 2 -type d -printf '%P\n' | head -n 200
+        with:
+          # If your code is on a non-main branch, set it here (or remove once merged)
+          # ref: codex/generate-complete-pharaoh-os-repository
+          fetch-depth: 0
 
       - name: Install system deps
         run: |
           sudo apt-get update
-          sudo apt-get install -y \
-            build-essential gcc-multilib nasm \
-            grub-pc-bin xorriso mtools
+          sudo apt-get install -y build-essential gcc-multilib nasm grub-pc-bin xorriso mtools dos2unix
 
-      - name: Detect build directory (where the Makefile lives)
+      - name: Detect build directory (Makefile location)
         id: detect
         shell: bash
         run: |
           set -euo pipefail
-          # default to repo root
-          BUILD_DIR="."
-          # look for any standard makefile name anywhere
           MF="$(git ls-files | grep -Ei '(^|/)(GNUmakefile|Makefile|makefile)$' | head -n1 || true)"
-          if [ -n "${MF:-}" ]; then
-            BUILD_DIR="$(dirname "$MF")"
-          fi
+          BUILD_DIR="."
+          if [ -n "${MF:-}" ]; then BUILD_DIR="$(dirname "$MF")"; fi
           echo "BUILD_DIR=$BUILD_DIR" | tee -a "$GITHUB_ENV"
           echo "Using BUILD_DIR=$BUILD_DIR"
-          
-      - name: Normalize Makefile (tabs + LF)
+
+      # -------- FIX MAKEFILE BEFORE RUNNING MAKE ----------
+      - name: Normalize Makefile (CRLF → LF, fix recipe tabs)
         working-directory: ${{ env.BUILD_DIR }}
         shell: bash
         run: |
           set -euo pipefail
-          sudo apt-get update && sudo apt-get install -y dos2unix
-          # convert CRLF -> LF (Windows endings cause parse errors)
-          dos2unix Makefile 2>/dev/null || true
-          # ensure recipe lines start with a TAB, not spaces
+          MF=""
+          for c in Makefile GNUmakefile makefile; do
+            if [ -f "$c" ]; then MF="$c"; break; fi
+          done
+          [ -n "$MF" ] || { echo "No Makefile found in $PWD"; exit 1; }
+
+          # 1) Convert CRLF to LF and strip non-breaking spaces
+          dos2unix "$MF" || true
+          perl -i -pe 's/\xC2\xA0/ /g' "$MF"   # NBSP → space
+
+          # 2) Convert leading spaces on *recipe lines* to a TAB.
+          # We detect we're "inside a recipe" after a target line like: name: deps...
           awk '
-            BEGIN{inr=0}
-            /^[^#[:space:]].*:/ {inr=1; print; next}   # a target line
-            inr && /^[ ]+\S/   {sub(/^[ ]+/, "\t"); print; next}  # convert leading spaces -> TAB
-            /^$/               {inr=0}
-                             {print}
-          ' Makefile > Makefile.fixed && mv Makefile.fixed Makefile
-          echo "Preview first 40 lines with line numbers:"
-          nl -ba Makefile | sed -n "1,40p"
+            BEGIN{inrecipe=0}
+            /^[[:space:]]*#/ {print; next}                              # comment, passthrough
+            /^[[:space:]]*$/ {print; next}                              # blank, passthrough
+            /^[^[:space:]#][^:=]*:([^=]|$)/ {print; inrecipe=1; next}   # target line
+            /^[^[:space:]]/ {print; inrecipe=0; next}                   # new non-indented non-target line resets
+            {
+              if(inrecipe && $0 ~ /^[ ]+\S/) { sub(/^[ ]+/, "\t"); }    # leading spaces → TAB
+              print
+            }
+          ' "$MF" > "$MF.fixed" && mv "$MF.fixed" "$MF"
+
+          echo "Preview (first 80 lines with line numbers):"
+          nl -ba "$MF" | sed -n '1,80p'
 
       - name: List targets from detected Makefile
-        shell: bash
         working-directory: ${{ env.BUILD_DIR }}
+        shell: bash
         run: |
-          if [ -f Makefile ] || [ -f makefile ] || [ -f GNUmakefile ]; then
-            echo "== Targets in $(pwd) =="
-            make -qp | awk -F':' '/^[a-zA-Z0-9][^$#\/\t=]*:([^=]|$)/ {print $1}' | sort -u | head -n 200
-          else
-            echo "No Makefile in detected dir $(pwd)"
-            exit 1
-          fi
+          echo "== Targets in $(pwd) =="
+          make -qp | awk -F':' '/^[a-zA-Z0-9][^$#\/\t=]*:([^=]|$)/ {print $1}' | sort -u | sed -n '1,200p'
 
       - name: Build ISO via Makefile (tries common targets)
-        shell: bash
         working-directory: ${{ env.BUILD_DIR }}
+        shell: bash
         run: |
           set -euo pipefail
-          TRY_TARGETS=("iso-bios" "isoimage" "iso" "image" "all")
-          built=0
-          for t in "${TRY_TARGETS[@]}"; do
+          TRY=("iso-bios" "isoimage" "iso" "image" "all")
+          ok=0
+          for t in "${TRY[@]}"; do
             if make -n "$t" >/dev/null 2>&1; then
               echo "Running: make $t"
               make "$t"
-              built=1
-              break
+              ok=1; break
             fi
           done
-          if [ "$built" -eq 0 ]; then
-            echo "No known ISO target found (tried: ${TRY_TARGETS[*]})."
-            echo "Add an 'iso-bios' or 'iso' target that outputs an .iso into ./out/"
-            exit 2
-          fi
+          [ "$ok" -eq 1 ] || { echo "No known ISO target (tried: ${TRY[*]})."; exit 2; }
 
       - name: Locate and normalize ISOs
         shell: bash
@@ -107,22 +94,16 @@ jobs:
           set -euo pipefail
           mkdir -p out
           mapfile -t ISO_LIST < <(find "$GITHUB_WORKSPACE" -type f -name '*.iso' | sort || true)
-          echo "Found ${#ISO_LIST[@]} ISO(s):"
-          printf ' - %s\n' "${ISO_LIST[@]}" || true
-          if [ "${#ISO_LIST[@]}" -eq 0 ]; then
-            echo "No ISO files were created."
-            exit 3
-          fi
-          # copy first match to bios; second to uefi (if present); preserve if names already have bios/uefi
-          BIOS_COPIED=0
-          UEFI_COPIED=0
+          echo "Found ${#ISO_LIST[@]} ISO(s):"; printf ' - %s\n' "${ISO_LIST[@]}" || true
+          [ "${#ISO_LIST[@]}" -ge 1 ] || { echo "No ISO files were created."; exit 3; }
+          BIOS_SET=0; UEFI_SET=0
           for f in "${ISO_LIST[@]}"; do
             low="$(basename "$f" | tr '[:upper:]' '[:lower:]')"
-            if [[ $low == *uefi*.iso && $UEFI_COPIED -eq 0 ]]; then cp -f "$f" out/PharaohOS-uefi.iso; UEFI_COPIED=1; fi
-            if [[ $low == *bios*.iso && $BIOS_COPIED -eq 0 ]]; then cp -f "$f" out/PharaohOS-bios.iso; BIOS_COPIED=1; fi
+            if [[ $low == *uefi*.iso && $UEFI_SET -eq 0 ]]; then cp -f "$f" out/PharaohOS-uefi.iso; UEFI_SET=1; fi
+            if [[ $low == *bios*.iso && $BIOS_SET -eq 0 ]]; then cp -f "$f" out/PharaohOS-bios.iso; BIOS_SET=1; fi
           done
-          [ $BIOS_COPIED -eq 0 ] && cp -f "${ISO_LIST[0]}" out/PharaohOS-bios.iso || true
-          [ $UEFI_COPIED -eq 0 ] && [ "${#ISO_LIST[@]}" -ge 2 ] && cp -f "${ISO_LIST[1]}" out/PharaohOS-uefi.iso || true
+          [ $BIOS_SET -eq 0 ] && cp -f "${ISO_LIST[0]}" out/PharaohOS-bios.iso || true
+          [ $UEFI_SET -eq 0 ] && [ "${#ISO_LIST[@]}" -ge 2 ] && cp -f "${ISO_LIST[1]}" out/PharaohOS-uefi.iso || true
           echo "Normalized out/:"
           ls -lh out || true
 
