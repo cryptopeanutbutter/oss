@@ -1,0 +1,11 @@
+[Unit]
+Description=Ensure Network Connectivity on Boot
+After=NetworkManager.service
+Requires=NetworkManager.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/nmcli networking connectivity check
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,11 @@
+{
+  "name": "Royal Purple",
+  "background": "#120a24",
+  "surface": "#1b1034",
+  "accent": "#9d4edd",
+  "textPrimary": "#ffffff",
+  "textSecondary": "#d1c4ff",
+  "shadow": 0.4,
+  "panelOpacity": 0.88,
+  "blur": 16
+}

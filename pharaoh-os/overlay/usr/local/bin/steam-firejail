@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+exec firejail --profile=/etc/firejail/steam.profile flatpak run com.valvesoftware.Steam "$@"

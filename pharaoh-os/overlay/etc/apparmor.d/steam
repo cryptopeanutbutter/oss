@@ -1,0 +1,15 @@
+# AppArmor profile for Steam Flatpak launcher
+#include <tunables/global>
+
+profile steam /usr/local/bin/steam-firejail {
+  include <abstractions/base>
+  include <abstractions/dbus-session>
+  include <abstractions/nameservice>
+  include <abstractions/user-tmp>
+
+  network,
+
+  /usr/bin/firejail ixr,
+  /usr/local/bin/steam-firejail r,
+  owner @{HOME}/.var/app/com.valvesoftware.Steam/** rwk,
+}

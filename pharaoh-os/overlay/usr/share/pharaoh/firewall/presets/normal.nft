@@ -1,0 +1,15 @@
+table inet pharaoh {
+  chain output {
+    policy drop
+
+    oifname "lo" accept
+    ct state established,related accept
+
+    udp dport { 53, 123 } accept
+    tcp dport { 53, 80, 443 } accept
+    udp dport { 3478-3497, 27015-27050, 50000-65535 } accept
+    tcp dport { 22, 80, 443, 27015-27050 } accept
+
+    counter drop
+  }
+}

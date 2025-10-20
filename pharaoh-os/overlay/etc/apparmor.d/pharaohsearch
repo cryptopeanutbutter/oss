@@ -1,0 +1,24 @@
+# AppArmor profile for PharaohSearch browser
+#include <tunables/global>
+
+profile pharaohsearch /usr/local/pharaoh/pharaohsearch/pharaohsearch {
+  include <abstractions/base>
+  include <abstractions/nameservice>
+  include <abstractions/ssl_certs>
+  include <abstractions/user-tmp>
+
+  network,
+  capability net_bind_service,
+
+  # Restrict filesystem access
+  owner @{HOME}/.config/pharaohsearch/** rwk,
+  owner @{HOME}/.cache/pharaohsearch/** rwk,
+  @{PROC}/@{pid}/** r,
+
+  /usr/local/pharaoh/pharaohsearch/** mr,
+  /usr/bin/env ixr,
+  /usr/bin/xdg-open Pixr,
+
+  deny /bin/dash rx,
+  deny /usr/bin/python* mrwkl,
+}

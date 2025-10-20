@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+PRESET=${1:-}
+
+apply_rules() {
+  local preset="$1"
+  case "$preset" in
+    strict)
+      nft flush ruleset
+      nft -f /usr/share/pharaoh/firewall/presets/strict.nft
+      ;;
+    normal)
+      nft flush ruleset
+      nft -f /usr/share/pharaoh/firewall/presets/normal.nft
+      ;;
+    gaming)
+      nft flush ruleset
+      nft -f /usr/share/pharaoh/firewall/presets/gaming.nft
+      ;;
+    *)
+      echo "Unknown preset: $preset" >&2
+      exit 1
+      ;;
+  esac
+  echo "Applied $preset firewall preset"
+  sed -i "s/^PHARAOH_FIREWALL_PRESET=.*/PHARAOH_FIREWALL_PRESET=\"$preset\"/" /etc/default/pharaoh-os
+}
+
+if [[ -z "$PRESET" ]]; then
+  exec /usr/local/pharaoh/pharaoh-firewall/pharaoh-firewall
+else
+  apply_rules "$PRESET"
+fi

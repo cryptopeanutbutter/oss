@@ -1,0 +1,5 @@
+# Pharaoh OS default environment configuration
+PHARAOH_DEFAULT_THEME="dark"
+PHARAOH_DEFAULT_ACCENT="deep-purple"
+PHARAOH_ENABLE_FIREJAIL=1
+PHARAOH_FIREWALL_PRESET="normal"

@@ -1,0 +1,11 @@
+[Unit]
+Description=Initial Flatpak setup for Pharaoh OS
+ConditionPathExists=!%h/.config/pharaoh/flatpak-setup
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/pharaoh-flatpak-init
+ExecStartPost=/usr/bin/touch %h/.config/pharaoh/flatpak-setup
+
+[Install]
+WantedBy=default.target

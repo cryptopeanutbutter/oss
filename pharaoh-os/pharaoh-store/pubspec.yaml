@@ -1,0 +1,22 @@
+name: pharaoh_store
+description: Pharaoh OS software center bridging APT and Flatpak.
+version: 1.0.0
+publish_to: 'none'
+
+environment:
+  sdk: '>=2.19.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  provider: ^6.0.5
+  process_run: ^0.13.0
+  intl: ^0.18.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^2.0.3
+
+flutter:
+  uses-material-design: true
