@@ -1,0 +1,130 @@
+name: Build Pharaoh OS ISO
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  build-iso:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Show repo layout
+        shell: bash
+        run: |
+          echo "Workspace: $GITHUB_WORKSPACE"
+          ls -la
+          echo
+          echo "Top-level files:"
+          find . -maxdepth 1 -type f -printf '%f\n' | sort
+          echo
+          echo "Makefiles anywhere:"
+          git ls-files | grep -Ei '(^|/)(GNUmakefile|Makefile|makefile)$' || true
+          echo
+          echo "Top-level dirs:"
+          find . -maxdepth 2 -type d -printf '%P\n' | head -n 200
+
+      - name: Install system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential gcc-multilib nasm \
+            grub-pc-bin xorriso mtools
+
+      - name: Detect build directory (where the Makefile lives)
+        id: detect
+        shell: bash
+        run: |
+          set -euo pipefail
+          # default to repo root
+          BUILD_DIR="."
+          # look for any standard makefile name anywhere
+          MF="$(git ls-files | grep -Ei '(^|/)(GNUmakefile|Makefile|makefile)$' | head -n1 || true)"
+          if [ -n "${MF:-}" ]; then
+            BUILD_DIR="$(dirname "$MF")"
+          fi
+          echo "BUILD_DIR=$BUILD_DIR" | tee -a "$GITHUB_ENV"
+          echo "Using BUILD_DIR=$BUILD_DIR"
+
+      - name: List targets from detected Makefile
+        shell: bash
+        working-directory: ${{ env.BUILD_DIR }}
+        run: |
+          if [ -f Makefile ] || [ -f makefile ] || [ -f GNUmakefile ]; then
+            echo "== Targets in $(pwd) =="
+            make -qp | awk -F':' '/^[a-zA-Z0-9][^$#\/\t=]*:([^=]|$)/ {print $1}' | sort -u | head -n 200
+          else
+            echo "No Makefile in detected dir $(pwd)"
+            exit 1
+          fi
+
+      - name: Build ISO via Makefile (tries common targets)
+        shell: bash
+        working-directory: ${{ env.BUILD_DIR }}
+        run: |
+          set -euo pipefail
+          TRY_TARGETS=("iso-bios" "isoimage" "iso" "image" "all")
+          built=0
+          for t in "${TRY_TARGETS[@]}"; do
+            if make -n "$t" >/dev/null 2>&1; then
+              echo "Running: make $t"
+              make "$t"
+              built=1
+              break
+            fi
+          done
+          if [ "$built" -eq 0 ]; then
+            echo "No known ISO target found (tried: ${TRY_TARGETS[*]})."
+            echo "Add an 'iso-bios' or 'iso' target that outputs an .iso into ./out/"
+            exit 2
+          fi
+
+      - name: Locate and normalize ISOs
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          mapfile -t ISO_LIST < <(find "$GITHUB_WORKSPACE" -type f -name '*.iso' | sort || true)
+          echo "Found ${#ISO_LIST[@]} ISO(s):"
+          printf ' - %s\n' "${ISO_LIST[@]}" || true
+          if [ "${#ISO_LIST[@]}" -eq 0 ]; then
+            echo "No ISO files were created."
+            exit 3
+          fi
+          # copy first match to bios; second to uefi (if present); preserve if names already have bios/uefi
+          BIOS_COPIED=0
+          UEFI_COPIED=0
+          for f in "${ISO_LIST[@]}"; do
+            low="$(basename "$f" | tr '[:upper:]' '[:lower:]')"
+            if [[ $low == *uefi*.iso && $UEFI_COPIED -eq 0 ]]; then cp -f "$f" out/PharaohOS-uefi.iso; UEFI_COPIED=1; fi
+            if [[ $low == *bios*.iso && $BIOS_COPIED -eq 0 ]]; then cp -f "$f" out/PharaohOS-bios.iso; BIOS_COPIED=1; fi
+          done
+          [ $BIOS_COPIED -eq 0 ] && cp -f "${ISO_LIST[0]}" out/PharaohOS-bios.iso || true
+          [ $UEFI_COPIED -eq 0 ] && [ "${#ISO_LIST[@]}" -ge 2 ] && cp -f "${ISO_LIST[1]}" out/PharaohOS-uefi.iso || true
+          echo "Normalized out/:"
+          ls -lh out || true
+
+      - name: Upload BIOS ISO (if present)
+        uses: actions/upload-artifact@v4
+        with:
+          name: PharaohOS-bios.iso
+          path: out/PharaohOS-bios.iso
+          if-no-files-found: warn
+
+      - name: Upload UEFI ISO (if present)
+        uses: actions/upload-artifact@v4
+        with:
+          name: PharaohOS-uefi.iso
+          path: out/PharaohOS-uefi.iso
+          if-no-files-found: warn
+
+      - name: Upload any ISOs (catch-all)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pharaoh-os-isos
+          path: ${{ github.workspace }}/**/*.iso
+          if-no-files-found: warn
