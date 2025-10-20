@@ -48,6 +48,25 @@ jobs:
           fi
           echo "BUILD_DIR=$BUILD_DIR" | tee -a "$GITHUB_ENV"
           echo "Using BUILD_DIR=$BUILD_DIR"
+          
+      - name: Normalize Makefile (tabs + LF)
+        working-directory: ${{ env.BUILD_DIR }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update && sudo apt-get install -y dos2unix
+          # convert CRLF -> LF (Windows endings cause parse errors)
+          dos2unix Makefile 2>/dev/null || true
+          # ensure recipe lines start with a TAB, not spaces
+          awk '
+            BEGIN{inr=0}
+            /^[^#[:space:]].*:/ {inr=1; print; next}   # a target line
+            inr && /^[ ]+\S/   {sub(/^[ ]+/, "\t"); print; next}  # convert leading spaces -> TAB
+            /^$/               {inr=0}
+                             {print}
+          ' Makefile > Makefile.fixed && mv Makefile.fixed Makefile
+          echo "Preview first 40 lines with line numbers:"
+          nl -ba Makefile | sed -n "1,40p"
 
       - name: List targets from detected Makefile
         shell: bash
